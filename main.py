@@ -2,6 +2,7 @@ import base64
 import logging
 import os
 import re
+import sys
 import time
 from datetime import datetime, timedelta
 
@@ -20,7 +21,7 @@ ADMIN = os.getenv('ADMIN_ID')
 
 creds_file_path = '/root/mail_spy/google_creds.json'
 token_file_path = '/root/mail_spy/token.json'
-SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
+SCOPES = ['https://mail.google.com/']
 
 
 def get_and_parse_mails():
@@ -62,6 +63,9 @@ def get_and_parse_mails():
                 logging.info('Распарсили данные и создали запрос')
                 check_and_send_new_request(site_request)
                 logging.info('Проверили и отправили запрос')
+                message_id = message['id']
+                service.users().messages().delete(userId='me', id=message_id).execute()
+                logging.info('Удалили письмо')
 
     except HttpError as error:
         error_text = f'Произошла ошибка парсинга писем по заявкам ДГ с почты: {error}'
@@ -82,11 +86,18 @@ def check_and_send_new_request(site_request):
 
         if result[0] == 0:
             logging.info('Вставляем запись в базу')
-            cursor.execute(f"""INSERT INTO site_requests (date, name, last_name, age, city, email, phone, leader) 
-                               VALUES (\'{site_request.date}\', \'{site_request.name}\', \'{site_request.surname}\',
-                               \'{site_request.age}\', \'{site_request.city}\', \'{site_request.email}\', 
-                               \'{site_request.phone}\', \'{site_request.group}\');
-                            """)
+            cursor.execute(f"""INSERT INTO site_requests 
+            (date, name, last_name, age, city, email, phone, leader) 
+            VALUES (
+                \'{site_request.date}\', 
+                \'{site_request.name}\', 
+                \'{site_request.surname}\',
+                \'{site_request.age}\', 
+                \'{site_request.city}\', 
+                \'{site_request.email}\', 
+                \'{site_request.phone}\', 
+                \'{site_request.group}\');
+            """)
 
             logging.info('Добавляем новую запись в Google таблицу')
             add_new_site_request(site_request)
@@ -231,5 +242,6 @@ if __name__ == '__main__':
     logging.basicConfig(
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         level=logging.INFO,
+        stream=sys.stdout,
     )
     get_and_parse_mails()
