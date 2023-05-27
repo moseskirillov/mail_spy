@@ -170,8 +170,8 @@ def check_and_send_new_home_request(values):
         logging.info(f'Проверили количество совпадающих записей в базе, получили {result[0]}')
         if result[0] == 0:
             logging.info('Вставляем в базу запись о новой заявке на открытие дома для ДГ')
-            cursor.execute(f"""INSERT INTO open_group_requests 
-                                    (date, name, last_name, age, phone, email, is_church_member, is_home_group_member, leader_name) 
+            cursor.execute(f"""INSERT INTO open_home_requests 
+                                    (date, name, last_name, age, phone, email, metro, day, type) 
                                     VALUES (
                                         \'{values[0]}\', 
                                         \'{values[1]}\', 
@@ -262,10 +262,11 @@ def extract_field_from_text(pattern, text):
 
 
 def send_join_request_to_leader(from_site_request, cursor):
-    cursor.execute(f"""SELECT gl.name, gl.telegram_id, rl.telegram_id
+    cursor.execute(f"""SELECT gl.name, gl.telegram_id, rl.telegram_id, g.age
                        FROM regionals_groups
                        LEFT JOIN group_leaders gl ON gl.id = regionals_groups.group_leader_id
                        LEFT JOIN regional_leaders rl ON rl.id = regionals_groups.regional_leader_id
+                       LEFT JOIN groups g ON gl.id = g.leader_id
                        WHERE gl.name = \'{from_site_request.group}\';
                     """)
     logging.info('Сделали запрос в БД для получения информации и лидере ДГ и региональном лидере')
@@ -280,7 +281,7 @@ def send_join_request_to_leader(from_site_request, cursor):
 
     if result:
         logging.info('Получили информацию о лидерах')
-        leader_name, leader_telegram, regional_leader_telegram = result
+        leader_name, leader_telegram, regional_leader_telegram, group_age = result
         logging.info(f'Лидер ДГ: {leader_name}')
 
         message_to_regional_leader = f'С сайта пришла заявка на присоединение ' \
@@ -290,18 +291,22 @@ def send_join_request_to_leader(from_site_request, cursor):
                                      f'Фамилия: <b>{from_site_request.surname}</b>\n' \
                                      f'Телефон: <b>{from_site_request.phone}</b>'
 
-        time.sleep(5)
-        logging.info('Отправляем сообщение лидеру ДГ')
-        response_text_to_group_leader = send_message(
-            leader_telegram,
-            message_to_group_leader
-        )
+        if group_age != 'Молодежные (до 25)' and group_age != 'Молодежные (после 25)':
+            time.sleep(5)
+            logging.info('Отправляем сообщение лидеру ДГ')
+            response_text_to_group_leader = send_message(
+                leader_telegram,
+                message_to_group_leader
+            )
+            check_response(response_text_to_group_leader)
 
-        check_response(response_text_to_group_leader)
+        target_telegram = regional_leader_telegram \
+            if group_age != 'Молодежные (до 25)' and group_age != 'Молодежные (после 25)' \
+            else 305061142
 
         time.sleep(5)
         logging.info('Отправляем сообщение региональному лидеру')
-        response_text_to_regional_leader = send_message(regional_leader_telegram, message_to_regional_leader)
+        response_text_to_regional_leader = send_message(target_telegram, message_to_regional_leader)
 
         check_response(response_text_to_regional_leader)
 

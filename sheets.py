@@ -3,7 +3,7 @@ import logging
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-creds_file_path = '/root/mail_spy/google_creds.json'
+creds_file_path = '/root/mail_spy/sheets_creds.json'
 
 scope = ['https://www.googleapis.com/auth/spreadsheets', "https://www.googleapis.com/auth/drive"]
 credentials = ServiceAccountCredentials.from_json_keyfile_name(creds_file_path, scope)
