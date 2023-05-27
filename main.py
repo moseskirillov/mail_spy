@@ -7,6 +7,7 @@ import time
 from datetime import datetime, timedelta
 
 import requests
+from bs4 import BeautifulSoup
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -14,8 +15,8 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 from database_connect import connect_to_bot
-from models import SiteRequest, HTMLTagStripper
-from sheets import add_new_site_request
+from models import JoinToGroupRequest, HTMLTagStripper
+from sheets import add_new_join_group_request, add_new_open_group_request, add_new_open_home_request
 
 ADMIN = os.getenv('ADMIN_ID')
 
@@ -59,9 +60,29 @@ def get_and_parse_mails():
 
             if 'body' in payload and (subject == 'Домашняя группа' or subject == 'Регистрация на Домашнюю группу'):
                 logging.info('Нашли письмо на присоединение к домашней группе')
-                site_request = create_site_request(payload, date)
+                site_request = create_join_to_homegroup_request(payload, date)
                 logging.info('Распарсили данные и создали запрос')
-                check_and_send_new_request(site_request)
+                check_and_send_new_join_request(site_request)
+                logging.info('Проверили и отправили запрос')
+                message_id = message['id']
+                service.users().messages().delete(userId='me', id=message_id).execute()
+                logging.info('Удалили письмо')
+
+            if 'body' in payload and subject == 'Хочу начать домашнюю группу':
+                logging.info('Нашли письмо на открытие домашней группы')
+                request = create_open_homegroup_request(payload, date)
+                logging.info('Распарсили данные и создали запрос')
+                check_and_send_new_group_request(request)
+                logging.info('Проверили и отправили запрос')
+                message_id = message['id']
+                service.users().messages().delete(userId='me', id=message_id).execute()
+                logging.info('Удалили письмо')
+
+            if 'body' in payload and subject == 'Открою свой дом для Домашней Группы':
+                logging.info('Нашли письмо на открытие дома для ДГ')
+                request = create_open_homegroup_request(payload, date)
+                logging.info('Распарсили данные и создали запрос')
+                check_and_send_new_home_request(request)
                 logging.info('Проверили и отправили запрос')
                 message_id = message['id']
                 service.users().messages().delete(userId='me', id=message_id).execute()
@@ -73,7 +94,7 @@ def get_and_parse_mails():
         send_message(ADMIN, error_text)
 
 
-def check_and_send_new_request(site_request):
+def check_and_send_new_join_request(site_request):
     with connect_to_bot, connect_to_bot.cursor() as cursor:
         cursor.execute(f"""SELECT count(*) 
                           FROM site_requests 
@@ -85,7 +106,7 @@ def check_and_send_new_request(site_request):
         logging.info(f'Проверили количество совпадающих записей в базе, получили {result[0]}')
 
         if result[0] == 0:
-            logging.info('Вставляем запись в базу')
+            logging.info('Вставляем в базу запись о новой заявке на присоединение к ДГ')
             cursor.execute(f"""INSERT INTO site_requests 
             (date, name, last_name, age, city, email, phone, leader) 
             VALUES (
@@ -100,9 +121,71 @@ def check_and_send_new_request(site_request):
             """)
 
             logging.info('Добавляем новую запись в Google таблицу')
-            add_new_site_request(site_request)
+            add_new_join_group_request(site_request)
             logging.info('Отправляем сообщения лидерам в Telegram')
-            send_site_request_to_leader(site_request, cursor)
+            send_join_request_to_leader(site_request, cursor)
+            logging.info('Сообщения отправлены')
+
+
+def check_and_send_new_group_request(values):
+    with connect_to_bot, connect_to_bot.cursor() as cursor:
+        cursor.execute(f"""SELECT count(*)
+                            FROM open_group_requests
+                            WHERE name = \'{values[1]}'\
+                            AND last_name = \'{values[2]}'\
+                            AND phone = \'{values[4]}'\
+                        """)
+        result = cursor.fetchone()
+        logging.info(f'Проверили количество совпадающих записей в базе, получили {result[0]}')
+        if result[0] == 0:
+            logging.info('Вставляем в базу запись о новой заявке на открытие ДГ')
+            cursor.execute(f"""INSERT INTO open_group_requests 
+                        (date, name, last_name, age, phone, email, is_church_member, is_home_group_member, leader_name) 
+                        VALUES (
+                            \'{values[0]}\', 
+                            \'{values[1]}\', 
+                            \'{values[2]}\',
+                            \'{values[3]}\', 
+                            \'{values[4]}\', 
+                            \'{values[5]}\', 
+                            \'{values[6]}\', 
+                            \'{values[7]}\', 
+                            \'{values[8]}\');
+                        """)
+            add_new_open_group_request(values)
+            logging.info('Отправляем сообщения лидерам в Telegram')
+            send_open_request_to_admin(values)
+            logging.info('Сообщения отправлены')
+
+
+def check_and_send_new_home_request(values):
+    with connect_to_bot, connect_to_bot.cursor() as cursor:
+        cursor.execute(f"""SELECT count(*)
+                            FROM open_home_requests
+                            WHERE name = \'{values[1]}'\
+                            AND last_name = \'{values[2]}'\
+                            AND phone = \'{values[4]}'\
+                        """)
+        result = cursor.fetchone()
+        logging.info(f'Проверили количество совпадающих записей в базе, получили {result[0]}')
+        if result[0] == 0:
+            logging.info('Вставляем в базу запись о новой заявке на открытие дома для ДГ')
+            cursor.execute(f"""INSERT INTO open_group_requests 
+                                    (date, name, last_name, age, phone, email, is_church_member, is_home_group_member, leader_name) 
+                                    VALUES (
+                                        \'{values[0]}\', 
+                                        \'{values[1]}\', 
+                                        \'{values[2]}\',
+                                        \'{values[3]}\', 
+                                        \'{values[4]}\', 
+                                        \'{values[5]}\', 
+                                        \'{values[6]}\', 
+                                        \'{values[7]}\', 
+                                        \'{values[8]}\');
+                                    """)
+            add_new_open_home_request(values)
+            logging.info('Отправляем сообщения лидерам в Telegram')
+            send_home_request_to_admin(values)
             logging.info('Сообщения отправлены')
 
 
@@ -123,8 +206,8 @@ def google_creds_check():
     return creds
 
 
-def create_site_request(payload, date):
-    logging.info('Начинаем парсинг данных')
+def create_join_to_homegroup_request(payload, date):
+    logging.info('Начинаем парсинг данных запроса на присоединение к ДГ')
     date_obj = datetime.strptime(date, "%a, %d %b %Y %H:%M:%S %z (%Z)")
     formatted_date = date_obj.strftime("%d.%m.%Y")
     tag_stripper = HTMLTagStripper()
@@ -149,7 +232,23 @@ def create_site_request(payload, date):
     group = f'{last_name} {first_name}'
     logging.info(f'Получили группу: {group}')
 
-    return SiteRequest(formatted_date, name, surname, age, city, email, phone, group)
+    return JoinToGroupRequest(formatted_date, name, surname, age, city, email, phone, group)
+
+
+def create_open_homegroup_request(payload, date):
+    logging.info('Начинаем парсинг данных запроса')
+    date_obj = datetime.strptime(date, "%a, %d %b %Y %H:%M:%S %z")
+    formatted_date = date_obj.strftime("%d.%m.%Y")
+    body = base64.urlsafe_b64decode(payload['body']['data']).decode()
+    soup: BeautifulSoup = BeautifulSoup(body, 'html.parser')
+    tbody = soup.find('tbody')
+    values = [formatted_date]
+    if tbody:
+        for row in tbody.find_all('tr'):
+            cells = row.find_all('td')
+            if len(cells) == 2:
+                values.append(cells[1].text.strip())
+    return values
 
 
 def extract_field_from_text(pattern, text):
@@ -162,7 +261,7 @@ def extract_field_from_text(pattern, text):
     return None
 
 
-def send_site_request_to_leader(from_site_request, cursor):
+def send_join_request_to_leader(from_site_request, cursor):
     cursor.execute(f"""SELECT gl.name, gl.telegram_id, rl.telegram_id
                        FROM regionals_groups
                        LEFT JOIN group_leaders gl ON gl.id = regionals_groups.group_leader_id
@@ -215,6 +314,46 @@ def send_site_request_to_leader(from_site_request, cursor):
     else:
         logging.error(f'Ошибка получения данных по ДГ для лидера {from_site_request.group}')
         send_message(ADMIN, message_to_group_leader)
+
+
+def send_open_request_to_admin(values):
+    message_to_admin = f'С сайта пришла заявка на открытие домашней группы:\n\n' \
+                       f'<b>Имя</b>: {values[1]}\n' \
+                       f'<b>Фамилия</b>: {values[2]}\n' \
+                       f'<b>Возраст</b>: {values[3]}\n' \
+                       f'<b>Телефон</b>: {values[4]}\n' \
+                       f'<b>E-mail</b>: {values[5]}\n' \
+                       f'<b>Член церкви</b>: {values[6]}\n' \
+                       f'<b>Посещает ДГ</b>: {values[7]}\n' \
+                       f'<b>Имя лидера</b>: {values[8]}\n'
+    logging.info('Отправляем сообщение администратору')
+    time.sleep(5)
+    response_of_admin_message = send_message(ADMIN, message_to_admin)
+    check_response(response_of_admin_message)
+    logging.info('Отправляем сообщение Марине')
+    time.sleep(5)
+    response_of_pelna_message = send_message('1618978480', message_to_admin)
+    check_response(response_of_pelna_message)
+
+
+def send_home_request_to_admin(values):
+    message_to_admin = f'С сайта пришла заявка на открытие дома для ДГ:\n\n' \
+                       f'<b>Имя</b>: {values[1]}\n' \
+                       f'<b>Фамилия</b>: {values[2]}\n' \
+                       f'<b>Возраст</b>: {values[3]}\n' \
+                       f'<b>Телефон</b>: {values[4]}\n' \
+                       f'<b>E-mail</b>: {values[5]}\n' \
+                       f'<b>Метро</b>: {values[6]}\n' \
+                       f'<b>День недели</b>: {values[7]}\n' \
+                       f'<b>Вид ДГ</b>: {values[8]}\n'
+    logging.info('Отправляем сообщение администратору')
+    time.sleep(5)
+    response_of_admin_message = send_message(ADMIN, message_to_admin)
+    check_response(response_of_admin_message)
+    logging.info('Отправляем сообщение Марине')
+    time.sleep(5)
+    response_of_pelna_message = send_message('1618978480', message_to_admin)
+    check_response(response_of_pelna_message)
 
 
 def send_message(chat_id, text):

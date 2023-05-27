@@ -1,7 +1,7 @@
 from html.parser import HTMLParser
 
 
-class SiteRequest:
+class JoinToGroupRequest:
     def __init__(self, date, name, surname, age, city, email, phone, group):
         self.date = date
         self.name = name
