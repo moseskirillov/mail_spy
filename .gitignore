@@ -1,0 +1,6 @@
+.idea
+.env
+google_creds.json
+token.json
+sheets_creds.json
+log.txt

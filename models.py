@@ -13,8 +13,16 @@ class JoinToGroupRequest:
         self.group = group
 
     def to_list(self):
-        return [str(self.date), str(self.name), str(self.surname), str(self.age), str(self.city),
-                str(self.email), str(self.phone), str(self.group)]
+        return [
+            str(self.date),
+            str(self.name),
+            str(self.surname),
+            str(self.age),
+            str(self.city),
+            str(self.email),
+            str(self.phone),
+            str(self.group)
+        ]
 
 
 class HTMLTagStripper(HTMLParser):

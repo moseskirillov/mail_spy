@@ -19,9 +19,11 @@ from models import JoinToGroupRequest, HTMLTagStripper
 from sheets import add_new_join_group_request, add_new_open_group_request, add_new_open_home_request
 
 ADMIN = os.getenv('ADMIN_ID')
+MARINA = os.getenv('MARINA_ID')
+YANA = os.getenv('YANA_ID')
 
-creds_file_path = '/root/mail_spy/google_creds.json'
-token_file_path = '/root/mail_spy/token.json'
+creds_file_path = os.getenv('GOOGLE_CREDS')
+token_file_path = os.getenv('TOKEN_FILE')
 SCOPES = ['https://mail.google.com/']
 
 
@@ -34,8 +36,10 @@ def get_and_parse_mails():
         tomorrow = today + timedelta(days=1)
         formatted_date_yesterday = yesterday.strftime("%Y/%m/%d").replace('/', '/')
         tomorrow_date_today = tomorrow.strftime("%Y/%m/%d").replace('/', '/')
-        results = service.users().messages().list(userId='me',
-                                                  q=f'after:{formatted_date_yesterday} before:{tomorrow_date_today}').execute()
+        results = (service.users().messages().list(
+            userId='me',
+            q=f'after:{formatted_date_yesterday} before:{tomorrow_date_today}')
+                   .execute())
         messages = results.get('messages')
         logging.info('Получили письма')
 
@@ -53,12 +57,12 @@ def get_and_parse_mails():
             for header in headers:
                 name = header['name']
                 value = header['value']
+                if name.lower() == 'date':
+                    date = value
                 if name.lower() == 'subject':
                     subject = value
-                elif name.lower() == 'date':
-                    date = value
 
-            if 'body' in payload and (subject == 'Домашняя группа' or subject == 'Регистрация на Домашнюю группу'):
+            if 'body' in payload and (subject == 'Новая заполненная форма'):
                 logging.info('Нашли письмо на присоединение к домашней группе')
                 site_request = create_join_to_homegroup_request(payload, date)
                 logging.info('Распарсили данные и создали запрос')
@@ -96,97 +100,25 @@ def get_and_parse_mails():
 
 def check_and_send_new_join_request(site_request):
     with connect_to_bot, connect_to_bot.cursor() as cursor:
-        cursor.execute(f"""SELECT count(*) 
-                          FROM site_requests 
-                          WHERE name = \'{site_request.name}\'
-                          AND last_name = \'{site_request.surname}\'
-                          AND phone = \'{site_request.phone}\';
-                       """)
-        result = cursor.fetchone()
-        logging.info(f'Проверили количество совпадающих записей в базе, получили {result[0]}')
-
-        if result[0] == 0:
-            logging.info('Вставляем в базу запись о новой заявке на присоединение к ДГ')
-            cursor.execute(f"""INSERT INTO site_requests 
-            (date, name, last_name, age, city, email, phone, leader) 
-            VALUES (
-                \'{site_request.date}\', 
-                \'{site_request.name}\', 
-                \'{site_request.surname}\',
-                \'{site_request.age}\', 
-                \'{site_request.city}\', 
-                \'{site_request.email}\', 
-                \'{site_request.phone}\', 
-                \'{site_request.group}\');
-            """)
-
-            logging.info('Добавляем новую запись в Google таблицу')
-            add_new_join_group_request(site_request)
-            logging.info('Отправляем сообщения лидерам в Telegram')
-            send_join_request_to_leader(site_request, cursor)
-            logging.info('Сообщения отправлены')
+        logging.info('Добавляем новую запись в Google таблицу')
+        add_new_join_group_request(site_request)
+        logging.info('Отправляем сообщения лидерам в Telegram')
+        send_join_request_to_leader(site_request, cursor)
+        logging.info('Сообщения отправлены')
 
 
 def check_and_send_new_group_request(values):
-    with connect_to_bot, connect_to_bot.cursor() as cursor:
-        cursor.execute(f"""SELECT count(*)
-                            FROM open_group_requests
-                            WHERE name = \'{values[1]}'\
-                            AND last_name = \'{values[2]}'\
-                            AND phone = \'{values[4]}'\
-                        """)
-        result = cursor.fetchone()
-        logging.info(f'Проверили количество совпадающих записей в базе, получили {result[0]}')
-        if result[0] == 0:
-            logging.info('Вставляем в базу запись о новой заявке на открытие ДГ')
-            cursor.execute(f"""INSERT INTO open_group_requests 
-                        (date, name, last_name, age, phone, email, is_church_member, is_home_group_member, leader_name) 
-                        VALUES (
-                            \'{values[0]}\', 
-                            \'{values[1]}\', 
-                            \'{values[2]}\',
-                            \'{values[3]}\', 
-                            \'{values[4]}\', 
-                            \'{values[5]}\', 
-                            \'{values[6]}\', 
-                            \'{values[7]}\', 
-                            \'{values[8]}\');
-                        """)
-            add_new_open_group_request(values)
-            logging.info('Отправляем сообщения лидерам в Telegram')
-            send_open_request_to_admin(values)
-            logging.info('Сообщения отправлены')
+    add_new_open_group_request(values)
+    logging.info('Отправляем сообщения лидерам в Telegram')
+    send_open_request_to_admin(values)
+    logging.info('Сообщения отправлены')
 
 
 def check_and_send_new_home_request(values):
-    with connect_to_bot, connect_to_bot.cursor() as cursor:
-        cursor.execute(f"""SELECT count(*)
-                            FROM open_home_requests
-                            WHERE name = \'{values[1]}'\
-                            AND last_name = \'{values[2]}'\
-                            AND phone = \'{values[4]}'\
-                        """)
-        result = cursor.fetchone()
-        logging.info(f'Проверили количество совпадающих записей в базе, получили {result[0]}')
-        if result[0] == 0:
-            logging.info('Вставляем в базу запись о новой заявке на открытие дома для ДГ')
-            cursor.execute(f"""INSERT INTO open_home_requests 
-                                    (date, name, last_name, age, phone, email, metro, day, type) 
-                                    VALUES (
-                                        \'{values[0]}\', 
-                                        \'{values[1]}\', 
-                                        \'{values[2]}\',
-                                        \'{values[3]}\', 
-                                        \'{values[4]}\', 
-                                        \'{values[5]}\', 
-                                        \'{values[6]}\', 
-                                        \'{values[7]}\', 
-                                        \'{values[8]}\');
-                                    """)
-            add_new_open_home_request(values)
-            logging.info('Отправляем сообщения лидерам в Telegram')
-            send_home_request_to_admin(values)
-            logging.info('Сообщения отправлены')
+    add_new_open_home_request(values)
+    logging.info('Отправляем сообщения лидерам в Telegram')
+    send_home_request_to_admin(values)
+    logging.info('Сообщения отправлены')
 
 
 def google_creds_check():
@@ -215,24 +147,27 @@ def create_join_to_homegroup_request(payload, date):
     tag_stripper.feed(body)
     stripped_text = ' '.join(tag_stripper.stripped_text)
 
-    name = extract_field_from_text(r'Имя\s+(\S+)', stripped_text)
-    logging.info(f'Получили имя: {name}')
-    surname = extract_field_from_text(r'Фамилия\s+(\S+)', stripped_text)
-    logging.info(f'Получили фамилию: {surname}')
-    age = extract_field_from_text(r'Полных\s+лет\s+\(Возраст\)\s+(\S+)', stripped_text)
-    logging.info(f'Получили возраст: {age}')
-    city = extract_field_from_text(r'Город\s+(\S+)', stripped_text)
-    logging.info(f'Получили город: {city}')
-    email = extract_field_from_text(r'E-mail\s+(\S+)', stripped_text)
-    logging.info(f'Получили почту: {email}')
-    phone = extract_field_from_text(r'Телефон\s+(\S+)', stripped_text)
-    logging.info(f'Получили телефон: {phone}')
-    group_parts = extract_field_from_text(r'ВЫБРАННАЯ\s+ДОМАШНЯЯ\s+ГРУППА\s+(\S+\s+\S+)', stripped_text)
-    first_name, last_name = group_parts.split()
-    group = f'{last_name} {first_name}'
-    logging.info(f'Получили группу: {group}')
+    theme = extract_field_from_text(r'Тема\s+(\S+\s+\S+\s+\S+\s+\S+\s+\S+)', stripped_text)
 
-    return JoinToGroupRequest(formatted_date, name, surname, age, city, email, phone, group)
+    if theme == 'Хочу присоединиться к домашней группе':
+        name = extract_field_from_text(r'Имя\s+(\S+)', stripped_text)
+        logging.info(f'Получили имя: {name}')
+        surname = extract_field_from_text(r'Фамилия\s+(\S+)', stripped_text)
+        logging.info(f'Получили фамилию: {surname}')
+        age = extract_field_from_text(r'Полных\s+лет\s+\(Возраст\)\s+(\S+)', stripped_text)
+        logging.info(f'Получили возраст: {age}')
+        city = extract_field_from_text(r'Город\s+(\S+)', stripped_text)
+        logging.info(f'Получили город: {city}')
+        email = extract_field_from_text(r'E-mail\s+(\S+)', stripped_text)
+        logging.info(f'Получили почту: {email}')
+        phone = extract_field_from_text(r'Телефон\s+(\S+)', stripped_text)
+        logging.info(f'Получили телефон: {phone}')
+        group_parts = extract_field_from_text(r'ВЫБРАННАЯ\s+ДОМАШНЯЯ\s+ГРУППА\s+(\S+\s+\S+)', stripped_text)
+        first_name, last_name = group_parts.split()
+        group = f'{last_name} {first_name}'
+        logging.info(f'Получили группу: {group}')
+
+        return JoinToGroupRequest(formatted_date, name, surname, age, city, email, phone, group)
 
 
 def create_open_homegroup_request(payload, date):
@@ -263,10 +198,10 @@ def extract_field_from_text(pattern, text):
 
 def send_join_request_to_leader(from_site_request, cursor):
     cursor.execute(f"""SELECT gl.name, gl.telegram_id, rl.telegram_id, g.age
-                       FROM regionals_groups
-                       LEFT JOIN group_leaders gl ON gl.id = regionals_groups.group_leader_id
-                       LEFT JOIN regional_leaders rl ON rl.id = regionals_groups.regional_leader_id
-                       LEFT JOIN groups g ON gl.id = g.leader_id
+                       FROM homegroup_bot.regional_leaders
+                       LEFT JOIN homegroup_bot.group_leaders gl ON gl.region_leader_id = regional_leaders.id
+                       LEFT JOIN homegroup_bot.regional_leaders rl ON rl.id = gl.region_leader_id
+                       LEFT JOIN homegroup_bot.groups g ON gl.id = g.leader_id
                        WHERE gl.name = \'{from_site_request.group}\';
                     """)
     logging.info('Сделали запрос в БД для получения информации и лидере ДГ и региональном лидере')
@@ -302,7 +237,7 @@ def send_join_request_to_leader(from_site_request, cursor):
 
         target_telegram = regional_leader_telegram \
             if group_age != 'Молодежные (до 25)' and group_age != 'Молодежные (после 25)' \
-            else 305061142
+            else YANA
 
         time.sleep(5)
         logging.info('Отправляем сообщение региональному лидеру')
@@ -337,7 +272,7 @@ def send_open_request_to_admin(values):
     check_response(response_of_admin_message)
     logging.info('Отправляем сообщение Марине')
     time.sleep(5)
-    response_of_pelna_message = send_message('1618978480', message_to_admin)
+    response_of_pelna_message = send_message(MARINA, message_to_admin)
     check_response(response_of_pelna_message)
 
 
@@ -357,7 +292,7 @@ def send_home_request_to_admin(values):
     check_response(response_of_admin_message)
     logging.info('Отправляем сообщение Марине')
     time.sleep(5)
-    response_of_pelna_message = send_message('1618978480', message_to_admin)
+    response_of_pelna_message = send_message(MARINA, message_to_admin)
     check_response(response_of_pelna_message)
 
 
